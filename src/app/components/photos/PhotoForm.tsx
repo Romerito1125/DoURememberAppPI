@@ -24,15 +24,18 @@ export default function PhotoForm({ initialData, onSubmit, onCancel, isEditMode 
   const [error, setError] = useState("")
   const [isSubmitting, setIsSubmitting] = useState(false)
 
-  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  // Criterio 2: Validar formato y tamaño
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
 
+    // Validar formato JPG o PNG
     if (!["image/jpeg", "image/jpg", "image/png"].includes(file.type)) {
       setError("Formato no válido. Solo se aceptan imágenes JPG o PNG.")
       return
     }
 
+    // Validar tamaño máximo 10MB
     const maxSize = 10 * 1024 * 1024
     if (file.size > maxSize) {
       setError("El archivo supera el tamaño máximo de 10MB.")
@@ -41,38 +44,46 @@ export default function PhotoForm({ initialData, onSubmit, onCancel, isEditMode 
 
     setError("")
     setFileName(file.name)
-
-    const formData = new FormData()
-    formData.append("file", file)
-    formData.append("upload_preset", "alzheimer-images") 
     
-
-    try {
-      const response = await fetch(
-        "https://api.cloudinary.com/v1_1/dt6cgb2sg/image/upload", 
-        {
-          method: "POST",
-          body: formData,
-        }
-      )
-      const data = await response.json()
-      setImageData(data.secure_url) 
-      console.log("Imagen subida:", data.secure_url)
-    } catch (error) {
-      setError("Error al subir la imagen. Intenta nuevamente.")
-      console.error("Error:", error)
+    // Convertir a base64 comprimido (resolución reducida)
+    const reader = new FileReader()
+    reader.onloadend = () => {
+      const img = document.createElement('img')
+      img.onload = () => {
+        // Crear canvas para redimensionar
+        const canvas = document.createElement('canvas')
+        const ctx = canvas.getContext('2d')
+        
+        // Redimensionar a máximo 800px de ancho
+        const maxWidth = 800
+        const scaleFactor = maxWidth / img.width
+        canvas.width = img.width > maxWidth ? maxWidth : img.width
+        canvas.height = img.width > maxWidth ? img.height * scaleFactor : img.height
+        
+        ctx?.drawImage(img, 0, 0, canvas.width, canvas.height)
+        
+        // Convertir a JPEG con calidad 0.7
+        const compressedBase64 = canvas.toDataURL('image/jpeg', 0.7)
+        setImageData(compressedBase64)
+        console.log("✅ Imagen procesada, tamaño:", compressedBase64.length)
+      }
+      img.src = reader.result as string
     }
+    reader.readAsDataURL(file)
   }
 
+  // Criterio 3: Validar campos obligatorios
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
     setError("")
 
+    // Validar que hay imagen (solo en modo crear)
     if (!isEditMode && !imageData) {
       setError("Debes seleccionar una imagen.")
       return
     }
 
+    // Validar campos obligatorios
     if (!people.trim()) {
       setError("El campo 'Personas en la imagen' es obligatorio.")
       return
@@ -88,6 +99,7 @@ export default function PhotoForm({ initialData, onSubmit, onCancel, isEditMode 
       return
     }
 
+    // Criterio 4 y 6: Enviar datos validados
     setIsSubmitting(true)
     
     const submitData = { 
@@ -98,12 +110,13 @@ export default function PhotoForm({ initialData, onSubmit, onCancel, isEditMode 
       fileName: fileName || undefined 
     }
     
-    console.log("Enviando datos:", submitData) 
+    console.log("Enviando datos:", submitData) // Debug
     onSubmit(submitData)
   }
 
   return (
     <form onSubmit={handleSubmit} className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
+      {/* Criterio 7: Mensaje de error claro sin perder datos */}
       {error && (
         <div className="mb-6 bg-red-50 border border-red-200 rounded-lg p-4 flex items-start">
           <AlertCircle className="w-5 h-5 text-red-600 mr-3 flex-shrink-0 mt-0.5" />
@@ -111,6 +124,7 @@ export default function PhotoForm({ initialData, onSubmit, onCancel, isEditMode 
         </div>
       )}
 
+      {/* Campo de imagen (solo en modo crear) */}
       {!isEditMode && (
         <div className="mb-6">
           <label className="block text-sm font-medium text-slate-700 mb-2">
@@ -142,6 +156,7 @@ export default function PhotoForm({ initialData, onSubmit, onCancel, isEditMode 
         </div>
       )}
 
+      {/* Campos obligatorios */}
       <div className="space-y-4 mb-6">
         <div>
           <label className="block text-sm font-medium text-slate-700 mb-2">
@@ -183,6 +198,7 @@ export default function PhotoForm({ initialData, onSubmit, onCancel, isEditMode 
         </div>
       </div>
 
+      {/* Botones */}
       <div className="flex justify-end gap-3 pt-4 border-t border-slate-200">
         {onCancel && (
           <button

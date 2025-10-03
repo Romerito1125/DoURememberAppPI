@@ -37,7 +37,15 @@ export default function EditPhotoPage() {
     const photos = JSON.parse(localStorage.getItem("patientPhotos") || "[]")
     const updated = photos.map((p: any) => {
       if (p.id === photoId) {
-        return { ...p, people: data.people, location: data.location, context: data.context }
+        return { 
+          ...p, 
+          people: data.people, 
+          location: data.location, 
+          context: data.context,
+          // Si hay nueva imagen, actualizarla
+          ...(data.imageData && { imageData: data.imageData }),
+          ...(data.fileName && { fileName: data.fileName })
+        }
       }
       return p
     })
@@ -92,7 +100,7 @@ export default function EditPhotoPage() {
         <div className="max-w-3xl mx-auto">
           <div className="mb-8">
             <h1 className="text-3xl font-bold text-slate-800 mb-2">Editar Imagen</h1>
-            <p className="text-slate-600">Actualiza la información de la fotografía.</p>
+            <p className="text-slate-600">Actualiza la información y/o imagen de la fotografía.</p>
           </div>
 
           {success && (
