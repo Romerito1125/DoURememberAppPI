@@ -13,7 +13,8 @@ const navItems: NavItem[] = [
     { label: "Inicio", href: "/" },
     { label: "Nosotros", href: "/about" },
     { label: "Servicios", href: "/services" },
-    { label: "Contacto", href: "/contact" },
+    { label: "Reportes", href: "/reports/baseline" },
+    { label: "Contacto", href: "/contact" }
 ]
 
 export default function Header() {

@@ -1,6 +1,8 @@
 "use client"
 
 import { useEffect, useState, useRef, useCallback } from "react"
+//import { shouldGenerateBaselineReport } from "@/utils/baselineReportGenerator"
+
 import { 
   ChevronLeft, 
   ChevronRight, 
@@ -173,48 +175,76 @@ export default function PatientGallery() {
   }
 
   // Guardar descripción final
-  const saveDescription = async () => {
-    if (!descriptionModal.photo) return
+  // Guardar descripción final + generar baseline automáticamente si aplica
+// Guardar descripción final
+const saveDescription = async () => {
+  if (!descriptionModal.photo) return
 
-    setIsSaving(true)
-    setSaveError(null)
+  setIsSaving(true)
+  setSaveError(null)
 
-    try {
-      // Simular un pequeño delay para mostrar el estado de guardando
-      await new Promise(resolve => setTimeout(resolve, 500))
+  try {
+    await new Promise(resolve => setTimeout(resolve, 500))
 
-      const stored = JSON.parse(localStorage.getItem("patientPhotos") || "[]")
-      const updated = stored.map((p: Photo) => {
-        if (p.id === descriptionModal.photo!.id) {
-          return {
-            ...p,
-            description: currentDescription,
-            descriptionProgress: "", // Limpiar el progreso
-            descriptionDate: new Date().toISOString()
-          }
+    const stored = JSON.parse(localStorage.getItem("patientPhotos") || "[]")
+    const updated = stored.map((p: Photo) => {
+      if (p.id === descriptionModal.photo!.id) {
+        return {
+          ...p,
+          description: currentDescription,
+          descriptionProgress: "",
+          descriptionDate: new Date().toISOString()
         }
-        return p
-      })
-      
-      localStorage.setItem("patientPhotos", JSON.stringify(updated))
-      
-      // Actualizar el estado local
-      setPhotos(updated)
-      
-      setIsSaving(false)
-      setSaveSuccess(true)
+      }
+      return p
+    })
+    
+    localStorage.setItem("patientPhotos", JSON.stringify(updated))
+    setPhotos(updated)
+    
 
-      // Cerrar el modal después de 1.5 segundos
-      setTimeout(() => {
-        closeDescriptionModal()
-      }, 1500)
+    // ✅✅✅ AGREGADO: GENERACIÓN AUTOMÁTICA DE BASELINE ✅✅✅
+    // Import dinámico para no cargar cuando no se usa
+    const { 
+      shouldGenerateBaselineReport, 
+      generateBaselineReport, 
+      notifyDoctorAboutNewReport 
+    } = await import("../../../utils/baselineReportGenerator")
 
-    } catch (error) {
-      console.error("Error al guardar:", error)
-      setIsSaving(false)
-      setSaveError("Error al guardar la descripción. Por favor, intenta nuevamente.")
+
+    const patientId = "patient-123" // TODO: Obtener del contexto
+    const patientName = "Paciente Ejemplo" // TODO: Obtener del perfil
+
+    if (shouldGenerateBaselineReport(patientId, updated)) {
+      console.log("🎯 Generando reporte baseline automáticamente...")
+
+      const report = generateBaselineReport(patientId, patientName, updated)
+
+      if (report) {
+        console.log("✅ Reporte baseline generado:", report)
+        notifyDoctorAboutNewReport(report.id, patientName)
+
+        setTimeout(() => {
+          alert("¡Evaluación completada! El médico ha sido notificado.")
+        }, 2000)
+      }
     }
+    // ✅ FIN DE BASELINE ✅
+
+
+    setIsSaving(false)
+    setSaveSuccess(true)
+
+    setTimeout(() => {
+      closeDescriptionModal()
+    }, 1500)
+
+  } catch (error) {
+    console.error("Error al guardar:", error)
+    setIsSaving(false)
+    setSaveError("Error al guardar la descripción.")
   }
+}
 
   // Cancelar descripción (no guarda nada)
   const cancelDescription = () => {
