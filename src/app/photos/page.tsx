@@ -5,31 +5,33 @@ import { useRouter } from "next/navigation"
 import Header from "@/app/components/header"
 import Footer from "@/app/components/footer"
 import DeletePhotoModal from "@/app/components/photos/DeletePhotoModal"
-import { Plus, Edit, Trash2, Image as ImageIcon, CheckCircle, X } from "lucide-react"
+import { Plus, Edit, Trash2, Image as ImageIcon, CheckCircle, X, Loader2 } from "lucide-react"
+import { createClient } from "@/utils/supabase/client"
 
-interface SavedPhoto {
-  id: string
-  fileName: string
-  people: string
-  location: string
-  context: string
-  uploadDate: string
-  patientId: string
-  imageUrl?: string
-  imageData?: string
+const API_URL = 'http://localhost:3000'
+
+interface Photo {
+  idImagen: number
+  urlImagen: string
+  fechaSubida: string
+  idCuidador: string
+  idAsset?: string
+  idPublicImage?: string
+  formato?: string
 }
 
 export default function PhotosListPage() {
   const router = useRouter()
-  const [photos, setPhotos] = useState<SavedPhoto[]>([])
-  const [selectedPhoto, setSelectedPhoto] = useState<SavedPhoto | null>(null)
+  const [photos, setPhotos] = useState<Photo[]>([])
+  const [selectedPhoto, setSelectedPhoto] = useState<Photo | null>(null)
+  const [isLoading, setIsLoading] = useState(true)
   const [deleteModal, setDeleteModal] = useState<{
     isOpen: boolean
-    photoId: string
+    photoId: number
     photoName: string
   }>({
     isOpen: false,
-    photoId: "",
+    photoId: 0,
     photoName: "",
   })
   const [showDeleteSuccess, setShowDeleteSuccess] = useState(false)
@@ -50,14 +52,36 @@ export default function PhotosListPage() {
     }
   }, [selectedPhoto])
 
-  const loadPhotos = () => {
-    const savedPhotos: SavedPhoto[] = JSON.parse(
-      localStorage.getItem("patientPhotos") || "[]"
-    )
-    setPhotos(savedPhotos)
+  const loadPhotos = async () => {
+    setIsLoading(true)
+    try {
+      const supabase = createClient()
+      const { data: { user } } = await supabase.auth.getUser()
+      
+      if (!user) {
+        alert('Debes iniciar sesión')
+        router.push('/authentication/login')
+        return
+      }
+
+      const response = await fetch(
+        `${API_URL}/descripciones-imagenes/listarImagenes/${user.id}?page=1&limit=100`
+      )
+
+      if (!response.ok) throw new Error('Error al cargar imágenes')
+      
+      const data = await response.json()
+      setPhotos(data.imagenes || [])
+      
+    } catch (error) {
+      console.error('Error al cargar fotos:', error)
+      alert('Error al cargar las imágenes')
+    } finally {
+      setIsLoading(false)
+    }
   }
 
-  const handlePhotoClick = (photo: SavedPhoto) => {
+  const handlePhotoClick = (photo: Photo) => {
     setSelectedPhoto(photo)
   }
 
@@ -65,38 +89,38 @@ export default function PhotosListPage() {
     setSelectedPhoto(null)
   }
 
-  const handleDeleteClick = (photo: SavedPhoto, e: React.MouseEvent) => {
+  const handleDeleteClick = (photo: Photo, e: React.MouseEvent) => {
     e.stopPropagation()
     setDeleteModal({
       isOpen: true,
-      photoId: photo.id,
-      photoName: photo.fileName,
+      photoId: photo.idImagen,
+      photoName: `Imagen ${photo.idImagen}`,
     })
   }
 
-  const handleEditClick = (photoId: string, e: React.MouseEvent) => {
-    e.stopPropagation()
-    router.push(`/photos/edit/${photoId}`)
-  }
+  const handleDeleteConfirm = async (photoId: number) => {
+    try {
+      const response = await fetch(`${API_URL}/descripciones-imagenes/eliminar/${photoId}`, {
+        method: 'DELETE'
+      })
 
-  const handleDeleteConfirm = async (photoId: string) => {
-    await new Promise(resolve => setTimeout(resolve, 1000))
+      if (!response.ok) throw new Error('Error al eliminar imagen')
 
-    const savedPhotos: SavedPhoto[] = JSON.parse(
-      localStorage.getItem("patientPhotos") || "[]"
-    )
-    const updatedPhotos = savedPhotos.filter(photo => photo.id !== photoId)
-    localStorage.setItem("patientPhotos", JSON.stringify(updatedPhotos))
+      // Actualizar lista local
+      setPhotos(photos.filter(photo => photo.idImagen !== photoId))
 
-    setPhotos(updatedPhotos)
-
-    setDeleteModal({ isOpen: false, photoId: "", photoName: "" })
-    setShowDeleteSuccess(true)
-    setTimeout(() => setShowDeleteSuccess(false), 3000)
+      setDeleteModal({ isOpen: false, photoId: 0, photoName: "" })
+      setShowDeleteSuccess(true)
+      setTimeout(() => setShowDeleteSuccess(false), 3000)
+      
+    } catch (error) {
+      console.error('Error al eliminar:', error)
+      alert('Error al eliminar la imagen')
+    }
   }
 
   const handleDeleteCancel = () => {
-    setDeleteModal({ isOpen: false, photoId: "", photoName: "" })
+    setDeleteModal({ isOpen: false, photoId: 0, photoName: "" })
   }
 
   const formatDate = (dateString: string) => {
@@ -106,6 +130,21 @@ export default function PhotosListPage() {
       month: "long",
       day: "numeric",
     })
+  }
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex flex-col">
+        <Header />
+        <main className="flex-1 flex items-center justify-center">
+          <div className="text-center">
+            <Loader2 className="w-12 h-12 text-purple-600 animate-spin mx-auto mb-4" />
+            <p className="text-slate-600">Cargando imágenes...</p>
+          </div>
+        </main>
+        <Footer />
+      </div>
+    )
   }
 
   return (
@@ -163,51 +202,36 @@ export default function PhotosListPage() {
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               {photos.map((photo) => (
                 <div
-                  key={photo.id}
+                  key={photo.idImagen}
                   onClick={() => handlePhotoClick(photo)}
                   className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden hover:shadow-md transition-all cursor-pointer transform hover:scale-[1.02]"
                 >
                   <div className="h-48 bg-gradient-to-br from-purple-100 to-purple-200 flex items-center justify-center overflow-hidden">
-                    {photo.imageUrl || photo.imageData ? (
-                      <img 
-                        src={photo.imageUrl || photo.imageData} 
-                        alt={photo.fileName}
-                        className="w-full h-full object-cover"
-                      />
-                    ) : (
-                      <ImageIcon className="w-16 h-16 text-purple-400" />
-                    )}
+                    <img 
+                      src={photo.urlImagen} 
+                      alt={`Imagen ${photo.idImagen}`}
+                      className="w-full h-full object-cover"
+                      onError={(e) => {
+                        e.currentTarget.src = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='400' height='400'%3E%3Crect fill='%23f1f5f9' width='400' height='400'/%3E%3Ctext x='50%25' y='50%25' dominant-baseline='middle' text-anchor='middle' fill='%2394a3b8' font-size='16'%3EImagen no disponible%3C/text%3E%3C/svg%3E"
+                      }}
+                    />
                   </div>
 
                   <div className="p-4">
-                    <h3 className="font-semibold text-slate-800 mb-2 truncate">
-                      {photo.fileName}
+                    <h3 className="font-semibold text-slate-800 mb-2">
+                      Imagen #{photo.idImagen}
                     </h3>
                     
                     <div className="space-y-2 text-sm text-slate-600 mb-4">
                       <p>
-                        <span className="font-medium">Personas:</span> {photo.people}
+                        <span className="font-medium">Formato:</span> {photo.formato?.toUpperCase() || 'N/A'}
                       </p>
                       <p>
-                        <span className="font-medium">Lugar:</span> {photo.location}
-                      </p>
-                      <p className="line-clamp-2">
-                        <span className="font-medium">Contexto:</span> {photo.context}
+                        <span className="font-medium">Subida:</span> {formatDate(photo.fechaSubida)}
                       </p>
                     </div>
 
-                    <p className="text-xs text-slate-500 mb-4">
-                      Cargada: {formatDate(photo.uploadDate)}
-                    </p>
-
                     <div className="flex gap-2">
-                      <button
-                        onClick={(e) => handleEditClick(photo.id, e)}
-                        className="flex-1 px-3 py-2 bg-slate-100 text-slate-700 rounded-lg hover:bg-slate-200 transition-colors flex items-center justify-center gap-2 text-sm"
-                      >
-                        <Edit className="w-4 h-4" />
-                        Editar
-                      </button>
                       <button
                         onClick={(e) => handleDeleteClick(photo, e)}
                         className="flex-1 px-3 py-2 bg-red-50 text-red-600 rounded-lg hover:bg-red-100 transition-colors flex items-center justify-center gap-2 text-sm"
@@ -224,7 +248,7 @@ export default function PhotosListPage() {
         </div>
       </main>
 
-      {/* Modal de Detalles - MEJORADO */}
+      {/* Modal de Detalles */}
       {selectedPhoto && (
         <div 
           className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-200"
@@ -234,9 +258,8 @@ export default function PhotosListPage() {
             className="bg-white rounded-xl max-w-3xl w-full max-h-[85vh] overflow-hidden shadow-2xl animate-in zoom-in-95 duration-200"
             onClick={(e) => e.stopPropagation()}
           >
-            {/* Header */}
             <div className="bg-white border-b border-slate-200 px-6 py-4 flex justify-between items-center">
-              <h2 className="text-xl font-bold text-slate-800">{selectedPhoto.fileName}</h2>
+              <h2 className="text-xl font-bold text-slate-800">Imagen #{selectedPhoto.idImagen}</h2>
               <button
                 onClick={closePhotoDetail}
                 className="p-2 hover:bg-slate-100 rounded-lg transition-colors"
@@ -245,72 +268,48 @@ export default function PhotosListPage() {
               </button>
             </div>
 
-            {/* Contenido con scroll */}
             <div className="overflow-y-auto max-h-[calc(85vh-80px)]">
               <div className="p-6">
-                {/* Imagen */}
                 <div className="mb-6 rounded-lg overflow-hidden bg-slate-50">
-                  {selectedPhoto.imageUrl || selectedPhoto.imageData ? (
-                    <img
-                      src={selectedPhoto.imageUrl || selectedPhoto.imageData}
-                      alt={selectedPhoto.fileName}
-                      className="w-full h-auto object-contain max-h-80"
-                    />
-                  ) : (
-                    <div className="w-full h-64 bg-gradient-to-br from-purple-100 to-purple-200 flex items-center justify-center">
-                      <ImageIcon className="w-20 h-20 text-purple-400" />
-                    </div>
-                  )}
+                  <img
+                    src={selectedPhoto.urlImagen}
+                    alt={`Imagen ${selectedPhoto.idImagen}`}
+                    className="w-full h-auto object-contain max-h-96"
+                    onError={(e) => {
+                      e.currentTarget.src = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='400' height='400'%3E%3Crect fill='%23f1f5f9' width='400' height='400'/%3E%3Ctext x='50%25' y='50%25' dominant-baseline='middle' text-anchor='middle' fill='%2394a3b8' font-size='16'%3EImagen no disponible%3C/text%3E%3C/svg%3E"
+                    }}
+                  />
                 </div>
 
-                {/* Información */}
                 <div className="space-y-4">
                   <div>
                     <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">
-                      Personas en la foto
+                      ID de Imagen
                     </h3>
-                    <p className="text-slate-800 text-base">{selectedPhoto.people}</p>
+                    <p className="text-slate-800 text-base">{selectedPhoto.idImagen}</p>
                   </div>
 
                   <div>
                     <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">
-                      Ubicación
+                      Formato
                     </h3>
-                    <p className="text-slate-800 text-base">{selectedPhoto.location}</p>
-                  </div>
-
-                  <div>
-                    <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">
-                      Contexto
-                    </h3>
-                    <p className="text-slate-800 text-base leading-relaxed">{selectedPhoto.context}</p>
+                    <p className="text-slate-800 text-base">{selectedPhoto.formato?.toUpperCase() || 'N/A'}</p>
                   </div>
 
                   <div className="pt-4 border-t border-slate-200">
                     <p className="text-sm text-slate-600">
-                      <span className="font-medium">Fecha de carga:</span> {formatDate(selectedPhoto.uploadDate)}
+                      <span className="font-medium">Fecha de carga:</span> {formatDate(selectedPhoto.fechaSubida)}
                     </p>
                   </div>
                 </div>
 
-                {/* Botones de acción */}
                 <div className="flex gap-3 mt-6 pt-6 border-t border-slate-200">
-                  <button
-                    onClick={() => {
-                      closePhotoDetail()
-                      router.push(`/photos/edit/${selectedPhoto.id}`)
-                    }}
-                    className="flex-1 px-4 py-2.5 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors flex items-center justify-center gap-2 font-medium"
-                  >
-                    <Edit className="w-4 h-4" />
-                    Editar
-                  </button>
                   <button
                     onClick={() => {
                       closePhotoDetail()
                       handleDeleteClick(selectedPhoto, { stopPropagation: () => {} } as React.MouseEvent)
                     }}
-                    className="px-4 py-2.5 bg-red-50 text-red-600 rounded-lg hover:bg-red-100 transition-colors flex items-center justify-center gap-2 font-medium"
+                    className="flex-1 px-4 py-2.5 bg-red-50 text-red-600 rounded-lg hover:bg-red-100 transition-colors flex items-center justify-center gap-2 font-medium"
                   >
                     <Trash2 className="w-4 h-4" />
                     Eliminar
@@ -324,9 +323,9 @@ export default function PhotosListPage() {
 
       <DeletePhotoModal
         isOpen={deleteModal.isOpen}
-        photoId={deleteModal.photoId}
+        photoId={deleteModal.photoId.toString()}
         photoName={deleteModal.photoName}
-        onConfirm={handleDeleteConfirm}
+        onConfirm={(id) => handleDeleteConfirm(parseInt(id))}
         onCancel={handleDeleteCancel}
       />
 
