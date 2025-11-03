@@ -1,64 +1,94 @@
 "use client"
 
-import { useEffect, useState, useRef, useCallback } from "react"
+import { useEffect, useState } from "react"
+import { useRouter } from "next/navigation"
 import { 
   ChevronLeft, 
-  ChevronRight, 
-  Plus, 
-  Minus, 
-  X, 
+  ChevronRight,
   AlertCircle,
-  CheckCircle,
   Save,
-  ZoomIn,
   Loader2,
-  AlertTriangle
+  Users,
+  MapPin,
+  FileText,
+  Sparkles,
+  Info,
+  CheckCircle
 } from "lucide-react"
 import Header from "@/app/components/header"
 import Footer from "@/app/components/footer"
+import WelcomeModal from "@/app/components/photos/WelcomeModal"
 import { createClient } from "@/utils/supabase/client"
 
-const API_URL = 'http://localhost:3000'
+const API_URL = 'http://localhost:3000/api'
 
 interface Photo {
   idImagen: number
   urlImagen: string
   fechaSubida: string
   idCuidador: string
-  fileName?: string
-  descripcion?: string
-  idDescripcion?: number
 }
 
-export default function PatientGallery() {
+interface SessionImage {
+  idSesion: number
+  idPaciente: string
+  imagenesIds: number[]
+  fechaCreacion: string
+}
+
+type DescriptionStep = 'personas' | 'lugar' | 'contexto' | 'detalles'
+
+const STEPS: { key: DescriptionStep; label: string; icon: any; placeholder: string; tip: string }[] = [
+  {
+    key: 'personas',
+    label: 'Personas en la imagen',
+    icon: Users,
+    placeholder: 'Ejemplo: Mi abuela María, mi tío Carlos y mi prima Laura...',
+    tip: '💡 Menciona nombres, edades aproximadas y la relación que tienen contigo'
+  },
+  {
+    key: 'lugar',
+    label: 'Lugar',
+    icon: MapPin,
+    placeholder: 'Ejemplo: En la casa de mi abuela en el barrio Granada, Cali...',
+    tip: '💡 Describe el lugar lo más específico posible: ciudad, barrio, casa, parque, etc.'
+  },
+  {
+    key: 'contexto',
+    label: 'Contexto del evento',
+    icon: FileText,
+    placeholder: 'Ejemplo: Era el cumpleaños número 70 de mi abuela, celebramos con toda la familia...',
+    tip: '💡 ¿Qué estaban celebrando? ¿Qué estaba pasando? ¿En qué fecha aproximada fue?'
+  },
+  {
+    key: 'detalles',
+    label: 'Detalles adicionales',
+    icon: Sparkles,
+    placeholder: 'Ejemplo: Hacía mucho sol ese día, todos estábamos muy felices, había torta de chocolate...',
+    tip: '💡 Añade cualquier detalle que recuerdes: clima, emociones, comida, anécdotas, etc.'
+  }
+]
+
+export default function PatientGalleryWithWelcome() {
+  const router = useRouter()
+  const [showWelcome, setShowWelcome] = useState(true)
   const [photos, setPhotos] = useState<Photo[]>([])
-  const [currentPreviewIndex, setCurrentPreviewIndex] = useState(0)
-  const [sesionId, setSesionId] = useState<number | null>(null)
+  const [currentPhotoIndex, setCurrentPhotoIndex] = useState(0)
+  const [currentStep, setCurrentStep] = useState<number>(0)
   const [userId, setUserId] = useState<string | null>(null)
-  
-  const [descriptionModal, setDescriptionModal] = useState<{
-    isOpen: boolean
-    photo: Photo | null
-    photoIndex: number
-  }>({
-    isOpen: false,
-    photo: null,
-    photoIndex: -1
-  })
-  
-  const [currentDescription, setCurrentDescription] = useState("")
-  const [isSaving, setIsSaving] = useState(false)
-  const [saveSuccess, setSaveSuccess] = useState(false)
-  const [saveError, setSaveError] = useState<string | null>(null)
-  const [isAutoSaving, setIsAutoSaving] = useState(false)
+  const [sesionActiva, setSesionActiva] = useState<SessionImage | null>(null)
   const [isLoading, setIsLoading] = useState(true)
+  const [isSaving, setIsSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [saveSuccess, setSaveSuccess] = useState(false)
   
-  const [selectedPhoto, setSelectedPhoto] = useState<Photo | null>(null)
-  const [zoom, setZoom] = useState(1)
-  const [imgError, setImgError] = useState(false)
-  
-  const autoSaveTimerRef = useRef<NodeJS.Timeout | null>(null)
-  const textareaRef = useRef<HTMLTextAreaElement>(null)
+  // Descripciones por paso
+  const [descriptions, setDescriptions] = useState<Record<DescriptionStep, string>>({
+    personas: '',
+    lugar: '',
+    contexto: '',
+    detalles: ''
+  })
 
   useEffect(() => {
     initSession()
@@ -71,235 +101,156 @@ export default function PatientGallery() {
       
       if (!user) {
         alert('Debes iniciar sesión')
+        router.push('/authentication/login')
         return
       }
 
       setUserId(user.id)
 
-      // Crear o obtener sesión activa
-      const response = await fetch(`${API_URL}/descripciones-imagenes/crearSesion`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ idPaciente: user.id })
-      })
+      // Obtener sesión activa del localStorage
+      const sesiones: SessionImage[] = JSON.parse(localStorage.getItem('sesionesImagenes') || '[]')
+      const sesionPaciente = sesiones.find(s => s.idPaciente === user.id)
 
-      if (!response.ok) throw new Error('Error al crear sesión')
-      
-      const sesion = await response.json()
-      setSesionId(sesion.idSesion)
-      
-      console.log('✅ Sesión iniciada:', sesion.idSesion)
+      if (!sesionPaciente) {
+        setError('No hay sesión activa. Contacta a tu cuidador para que cree una sesión.')
+        setIsLoading(false)
+        return
+      }
 
-      // Cargar fotos
-      await loadPhotos(user.id)
+      setSesionActiva(sesionPaciente)
+
+      // Verificar cuántas descripciones ya se hicieron
+      const descripcionesResponse = await fetch(
+        `${API_URL}/descripciones-imagenes/listarDescripciones/${sesionPaciente.idSesion}?page=1&limit=10`
+      )
+      
+      if (descripcionesResponse.ok) {
+        const descripcionesData = await descripcionesResponse.json()
+        const cantidadDescripciones = descripcionesData.data?.length || 0
+        
+        if (cantidadDescripciones >= 3) {
+          alert('¡Felicitaciones! Ya completaste todas las descripciones de esta sesión.')
+          router.push('/')
+          return
+        }
+
+        setCurrentPhotoIndex(cantidadDescripciones)
+      }
+
+      // Cargar las fotos de la sesión
+      const imagenesResponse = await fetch(
+        `${API_URL}/descripciones-imagenes/listarImagenes/${user.id}?page=1&limit=100`
+      )
+
+      if (!imagenesResponse.ok) throw new Error('Error al cargar imágenes')
+      
+      const imagenesData = await imagenesResponse.json()
+      const todasImagenes = imagenesData.imagenes || []
+      
+      // Filtrar solo las imágenes de esta sesión y ordenarlas según imagenesIds
+      const imagenesSesion = sesionPaciente.imagenesIds
+        .map(id => todasImagenes.find((img: Photo) => img.idImagen === id))
+        .filter(Boolean) as Photo[]
+
+      setPhotos(imagenesSesion)
       
     } catch (error) {
       console.error('Error al inicializar:', error)
-      alert('Error al cargar la sesión')
+      setError('Error al cargar la sesión')
     } finally {
       setIsLoading(false)
     }
   }
 
-  const loadPhotos = async (cuidadorId: string) => {
-    try {
-      const response = await fetch(
-        `${API_URL}/descripciones-imagenes/listarImagenes/${cuidadorId}?page=1&limit=100`
-      )
-
-      if (!response.ok) throw new Error('Error al cargar imágenes')
-      
-      const data = await response.json()
-      
-      // Ordenar por fecha (más antiguas primero)
-      const sortedPhotos = (data.imagenes || []).sort((a: Photo, b: Photo) => 
-        new Date(a.fechaSubida).getTime() - new Date(b.fechaSubida).getTime()
-      )
-      
-      setPhotos(sortedPhotos)
-      console.log('✅ Fotos cargadas:', sortedPhotos.length)
-      
-    } catch (error) {
-      console.error('Error al cargar fotos:', error)
-      alert('Error al cargar las imágenes')
+  const handleNextStep = () => {
+    if (currentStep < STEPS.length - 1) {
+      setCurrentStep(currentStep + 1)
     }
   }
 
-  const prevPreview = () => {
-    if (currentPreviewIndex > 0) setCurrentPreviewIndex(currentPreviewIndex - 1)
-  }
-
-  const nextPreview = () => {
-    if (currentPreviewIndex < photos.length - 1) setCurrentPreviewIndex(currentPreviewIndex + 1)
-  }
-
-  const openDescriptionModal = (idx: number) => {
-    const photo = photos[idx]
-    
-    setDescriptionModal({
-      isOpen: true,
-      photo: photo,
-      photoIndex: idx
-    })
-    
-    setCurrentDescription(photo.descripcion || "")
-    setSaveSuccess(false)
-    setSaveError(null)
-    
-    setTimeout(() => {
-      textareaRef.current?.focus()
-    }, 100)
-  }
-
-  const closeDescriptionModal = () => {
-    if (autoSaveTimerRef.current) {
-      clearTimeout(autoSaveTimerRef.current)
+  const handlePrevStep = () => {
+    if (currentStep > 0) {
+      setCurrentStep(currentStep - 1)
     }
-    
-    setDescriptionModal({
-      isOpen: false,
-      photo: null,
-      photoIndex: -1
-    })
-    setCurrentDescription("")
-    setSaveSuccess(false)
-    setSaveError(null)
-    setIsAutoSaving(false)
   }
 
-  const autoSaveProgress = useCallback((description: string) => {
-    if (autoSaveTimerRef.current) {
-      clearTimeout(autoSaveTimerRef.current)
+  const handleSaveDescription = async () => {
+    if (!sesionActiva || !userId) return
+
+    // Validar que al menos haya escrito algo
+    const hasContent = Object.values(descriptions).some(desc => desc.trim().length > 0)
+    if (!hasContent) {
+      setError('Debes escribir al menos algo en alguno de los campos antes de guardar')
+      setTimeout(() => setError(null), 4000)
+      return
     }
-
-    autoSaveTimerRef.current = setTimeout(() => {
-      console.log("✅ Progreso autoguardado localmente")
-      setIsAutoSaving(true)
-      setTimeout(() => setIsAutoSaving(false), 2000)
-    }, 1000)
-  }, [])
-
-  const handleDescriptionChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    const value = e.target.value
-    setCurrentDescription(value)
-    autoSaveProgress(value)
-  }
-
-  const saveDescription = async () => {
-    if (!descriptionModal.photo || !sesionId || !userId) return
 
     setIsSaving(true)
-    setSaveError(null)
+    setError(null)
 
     try {
-      // Crear descripción en el backend (calcula puntajes automáticamente)
+      // Concatenar todas las descripciones en un solo texto
+      const textoCompleto = `
+Personas: ${descriptions.personas || 'No especificado'}
+
+Lugar: ${descriptions.lugar || 'No especificado'}
+
+Contexto: ${descriptions.contexto || 'No especificado'}
+
+Detalles adicionales: ${descriptions.detalles || 'No especificado'}
+      `.trim()
+
+      const currentPhoto = photos[currentPhotoIndex]
+
+      // Enviar descripción al backend
       const response = await fetch(`${API_URL}/descripciones-imagenes/crearDescripcion`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          texto: currentDescription,
-          idImagen: descriptionModal.photo.idImagen,
-          idSesion: sesionId,
-          idPaciente: userId
+          texto: textoCompleto,
+          idImagen: currentPhoto.idImagen,
+          idPaciente: userId,
+          idSesion: sesionActiva.idSesion
         })
       })
 
       if (!response.ok) throw new Error('Error al guardar descripción')
-      
+
       const result = await response.json()
       console.log('✅ Descripción guardada:', result)
 
-      // Actualizar foto localmente
-      const updatedPhotos = photos.map(p => 
-        p.idImagen === descriptionModal.photo!.idImagen 
-          ? { ...p, descripcion: currentDescription, idDescripcion: result.idDescripcion }
-          : p
-      )
-      setPhotos(updatedPhotos)
-
-      // Verificar si completó todas las fotos
-      const todasDescritas = updatedPhotos.every(p => p.descripcion)
-      
-      if (todasDescritas) {
-        // Actualizar sesión a completada
-        await fetch(`${API_URL}/descripciones-imagenes/actualizarSesion/${sesionId}`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ estado: 'completado' })
-        })
-
-        // Obtener baseline
-        const baselineResponse = await fetch(`${API_URL}/descripciones-imagenes/baseline/${userId}`)
-        const baseline = await baselineResponse.json()
-        
-        console.log('✅ Baseline generado:', baseline)
-        
-        setTimeout(() => {
-          alert(`¡Evaluación completada!\n\nPuntaje Total: ${baseline.sessionTotal.toFixed(1)}%\n\nEl médico ha sido notificado.`)
-        }, 1500)
-      }
-
-      setIsSaving(false)
+      // Mostrar mensaje de éxito
       setSaveSuccess(true)
 
+      // Esperar un momento antes de continuar
       setTimeout(() => {
-        closeDescriptionModal()
-      }, 1500)
+        // Limpiar formulario
+        setDescriptions({
+          personas: '',
+          lugar: '',
+          contexto: '',
+          detalles: ''
+        })
+        setCurrentStep(0)
+        setSaveSuccess(false)
+
+        // Avanzar a la siguiente foto
+        if (currentPhotoIndex < photos.length - 1) {
+          setCurrentPhotoIndex(currentPhotoIndex + 1)
+        } else {
+          // Completó todas las fotos
+          alert('🎉 ¡Felicitaciones! Has completado todas las descripciones de esta sesión.')
+          router.push('/')
+        }
+      }, 2000)
 
     } catch (error: any) {
-      console.error("Error al guardar:", error)
+      console.error('❌ Error al guardar:', error)
+      setError(error.message || 'Error al guardar la descripción. Por favor intenta nuevamente.')
+    } finally {
       setIsSaving(false)
-      setSaveError(error.message || "Error al guardar la descripción.")
     }
   }
-
-  const cancelDescription = () => {
-    closeDescriptionModal()
-  }
-
-  const openZoomFromModal = () => {
-    if (descriptionModal.photo) {
-      setSelectedPhoto(descriptionModal.photo)
-      setZoom(1)
-      setImgError(false)
-    }
-  }
-
-  const closeZoom = () => {
-    setSelectedPhoto(null)
-    setZoom(1)
-    setImgError(false)
-  }
-
-  const handleZoomIn = () => {
-    setZoom((z) => Math.min(3, +(z + 0.2).toFixed(2)))
-  }
-
-  const handleZoomOut = () => {
-    setZoom((z) => Math.max(0.5, +(z - 0.2).toFixed(2)))
-  }
-
-  const onImageWheel = (e: React.WheelEvent) => {
-    e.preventDefault()
-    setZoom((z) => {
-      const delta = e.deltaY > 0 ? -0.1 : 0.1
-      return Math.min(3, Math.max(0.5, +(z + delta).toFixed(2)))
-    })
-  }
-
-  const handleImageError = () => {
-    setImgError(true)
-  }
-
-  useEffect(() => {
-    const handleEsc = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && selectedPhoto) {
-        closeZoom()
-      }
-    }
-    window.addEventListener("keydown", handleEsc)
-    return () => window.removeEventListener("keydown", handleEsc)
-  }, [selectedPhoto])
 
   if (isLoading) {
     return (
@@ -307,8 +258,8 @@ export default function PatientGallery() {
         <Header />
         <main className="flex-1 flex items-center justify-center">
           <div className="text-center">
-            <div className="w-12 h-12 border-4 border-purple-600 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
-            <p className="text-slate-600">Cargando tus recuerdos...</p>
+            <Loader2 className="w-12 h-12 text-purple-600 animate-spin mx-auto mb-4" />
+            <p className="text-slate-600">Cargando sesión...</p>
           </div>
         </main>
         <Footer />
@@ -316,266 +267,235 @@ export default function PatientGallery() {
     )
   }
 
+  if (error && !sesionActiva) {
+    return (
+      <div className="min-h-screen bg-gradient-to-b from-purple-50 to-slate-50 flex flex-col">
+        <Header />
+        <main className="flex-1 flex items-center justify-center p-6">
+          <div className="bg-white rounded-xl shadow-lg p-8 max-w-md">
+            <AlertCircle className="w-16 h-16 text-red-500 mx-auto mb-4" />
+            <h2 className="text-xl font-bold text-slate-800 mb-2 text-center">Sin sesión activa</h2>
+            <p className="text-slate-600 text-center mb-6">{error}</p>
+            <button
+              onClick={() => router.push('/')}
+              className="w-full px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700"
+            >
+              Volver al inicio
+            </button>
+          </div>
+        </main>
+        <Footer />
+      </div>
+    )
+  }
+
+  if (photos.length === 0) {
+    return (
+      <div className="min-h-screen bg-gradient-to-b from-purple-50 to-slate-50 flex flex-col">
+        <Header />
+        <main className="flex-1 flex items-center justify-center p-6">
+          <div className="text-center">
+            <AlertCircle className="w-16 h-16 text-amber-500 mx-auto mb-4" />
+            <p className="text-slate-600">No hay imágenes en esta sesión</p>
+            <button
+              onClick={() => router.push('/')}
+              className="mt-4 px-6 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700"
+            >
+              Volver al inicio
+            </button>
+          </div>
+        </main>
+        <Footer />
+      </div>
+    )
+  }
+
+  const currentPhoto = photos[currentPhotoIndex]
+  const currentStepData = STEPS[currentStep]
+  const Icon = currentStepData.icon
+
   return (
     <div className="min-h-screen bg-gradient-to-b from-purple-50 to-slate-50 flex flex-col">
       <Header />
 
+      {/* Modal de bienvenida */}
+      <WelcomeModal
+        isOpen={showWelcome}
+        onClose={() => setShowWelcome(false)}
+        onStart={() => setShowWelcome(false)}
+      />
+
       <main className="flex-1 container mx-auto px-6 py-12">
-        <h2 className="text-3xl font-bold text-slate-800 mb-2 text-center">Tus Recuerdos</h2>
-        <p className="text-slate-600 text-center mb-12">Toca una imagen para describirla</p>
-
-        {photos.length === 0 ? (
-          <div className="text-center py-20">
-            <p className="text-slate-400 text-lg">No hay imágenes disponibles aún</p>
-            <p className="text-slate-500 text-sm mt-2">Solicita a tu cuidador que suba algunas fotos</p>
-          </div>
-        ) : (
-          <div className="relative max-w-6xl mx-auto">
-            <div className="relative h-[500px] flex items-center justify-center overflow-hidden">
-              <div className="relative w-full h-full flex items-center justify-center">
-                {photos.map((p, idx) => {
-                  const diff = idx - currentPreviewIndex
-                  const isCenter = diff === 0
-                  const isLeft = diff === -1
-                  const isRight = diff === 1
-                  const isVisible = Math.abs(diff) <= 1
-
-                  if (!isVisible) return null
-
-                  const hasDescription = p.descripcion && p.descripcion.length > 0
-
-                  return (
-                    <div key={p.idImagen}
-                      onClick={() => openDescriptionModal(idx)}
-                      className="absolute transition-all duration-500 ease-out cursor-pointer"
-                      style={{
-                        transform: isCenter
-                          ? "translateX(0) scale(1)"
-                          : isLeft
-                          ? "translateX(-120%) scale(0.75)"
-                          : "translateX(120%) scale(0.75)",
-                        opacity: isCenter ? 1 : 0.4,
-                        zIndex: isCenter ? 20 : 10,
-                      }}
-                    >
-                      <div className={`bg-white rounded-2xl shadow-2xl overflow-hidden relative ${
-                        isCenter ? "ring-4 ring-purple-400" : ""
-                      }`}>
-                        <img
-                          src={p.urlImagen}
-                          alt={`Imagen ${idx + 1}`}
-                          onError={(e) => {
-                            e.currentTarget.src = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='400' height='400'%3E%3Crect fill='%23f1f5f9' width='400' height='400'/%3E%3Ctext x='50%25' y='50%25' dominant-baseline='middle' text-anchor='middle' fill='%2394a3b8' font-size='16' font-family='system-ui'%3EImagen no disponible%3C/text%3E%3C/svg%3E"
-                          }}
-                          className={`${isCenter ? "w-[450px] h-[400px]" : "w-[320px] h-[280px]"} object-cover`}
-                        />
-                        {hasDescription && isCenter && (
-                          <div className="absolute top-3 right-3 bg-green-500 text-white p-2 rounded-full shadow-lg">
-                            <CheckCircle className="w-5 h-5" />
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  )
-                })}
-              </div>
-
+        <div className="max-w-6xl mx-auto">
+          {/* Progreso */}
+          <div className="mb-8">
+            <div className="flex justify-between items-center mb-2">
+              <h2 className="text-2xl font-bold text-slate-800">
+                📸 Foto {currentPhotoIndex + 1} de {photos.length}
+              </h2>
               <button
-                onClick={prevPreview}
-                disabled={currentPreviewIndex === 0}
-                className={`absolute left-4 p-4 rounded-full shadow-xl transition-all z-30 ${
-                  currentPreviewIndex === 0
-                    ? "bg-slate-200 cursor-not-allowed opacity-50"
-                    : "bg-white hover:bg-purple-50"
-                }`}
+                onClick={() => setShowWelcome(true)}
+                className="text-purple-600 hover:text-purple-700 text-sm font-medium flex items-center gap-1"
               >
-                <ChevronLeft className={`w-8 h-8 ${
-                  currentPreviewIndex === 0 ? "text-slate-400" : "text-purple-600"
-                }`} />
-              </button>
-
-              <button
-                onClick={nextPreview}
-                disabled={currentPreviewIndex === photos.length - 1}
-                className={`absolute right-4 p-4 rounded-full shadow-xl transition-all z-30 ${
-                  currentPreviewIndex === photos.length - 1
-                    ? "bg-slate-200 cursor-not-allowed opacity-50"
-                    : "bg-white hover:bg-purple-50"
-                }`}
-              >
-                <ChevronRight className={`w-8 h-8 ${
-                  currentPreviewIndex === photos.length - 1 ? "text-slate-400" : "text-purple-600"
-                }`} />
+                <Info className="w-4 h-4" />
+                Ver instrucciones
               </button>
             </div>
+            
+            {/* Barra de progreso global */}
+            <div className="w-full bg-slate-200 rounded-full h-2 mb-1">
+              <div
+                className="bg-purple-600 h-2 rounded-full transition-all duration-300"
+                style={{ 
+                  width: `${((currentPhotoIndex * STEPS.length + currentStep) / (photos.length * STEPS.length)) * 100}%` 
+                }}
+              />
+            </div>
+            <p className="text-xs text-slate-500 text-right">
+              Progreso total: {Math.round(((currentPhotoIndex * STEPS.length + currentStep) / (photos.length * STEPS.length)) * 100)}%
+            </p>
+          </div>
 
-            <div className="mt-8 text-center">
-              <div className="inline-flex items-center gap-2 bg-white px-6 py-3 rounded-full shadow-lg">
-                <span className="text-2xl font-bold text-purple-600">{currentPreviewIndex + 1}</span>
-                <span className="text-slate-400">/</span>
-                <span className="text-lg text-slate-600">{photos.length}</span>
+          {saveSuccess && (
+            <div className="mb-6 bg-green-50 border border-green-200 rounded-lg p-4 flex items-center gap-3 animate-in fade-in duration-300">
+              <CheckCircle className="w-5 h-5 text-green-600 flex-shrink-0" />
+              <div>
+                <p className="text-green-800 font-medium">¡Descripción guardada exitosamente!</p>
+                <p className="text-green-700 text-sm">Avanzando a la siguiente foto...</p>
+              </div>
+            </div>
+          )}
+
+          <div className="grid md:grid-cols-2 gap-8">
+            {/* Imagen */}
+            <div className="bg-white rounded-xl shadow-lg overflow-hidden">
+              <img
+                src={currentPhoto.urlImagen}
+                alt={`Foto ${currentPhotoIndex + 1}`}
+                className="w-full h-[500px] object-contain bg-slate-50"
+                onError={(e) => {
+                  e.currentTarget.src = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='400' height='400'%3E%3Crect fill='%23f1f5f9' width='400' height='400'/%3E%3Ctext x='50%25' y='50%25' dominant-baseline='middle' text-anchor='middle' fill='%2394a3b8' font-size='16'%3EImagen no disponible%3C/text%3E%3C/svg%3E"
+                }}
+              />
+            </div>
+
+            {/* Formulario de descripción */}
+            <div className="bg-white rounded-xl shadow-lg p-6">
+              {/* Header del paso actual */}
+              <div className="flex items-center gap-3 mb-6 pb-6 border-b border-slate-200">
+                <div className="w-12 h-12 bg-purple-100 rounded-full flex items-center justify-center">
+                  <Icon className="w-6 h-6 text-purple-600" />
+                </div>
+                <div className="flex-1">
+                  <h3 className="text-lg font-semibold text-slate-800">
+                    {currentStepData.label}
+                  </h3>
+                  <p className="text-sm text-slate-500">
+                    Paso {currentStep + 1} de {STEPS.length}
+                  </p>
+                </div>
+              </div>
+
+              {/* Indicador de pasos */}
+              <div className="flex gap-2 mb-6">
+                {STEPS.map((step, index) => (
+                  <div
+                    key={step.key}
+                    className={`flex-1 h-2 rounded-full transition-all ${
+                      index === currentStep
+                        ? 'bg-purple-600'
+                        : index < currentStep
+                        ? 'bg-green-500'
+                        : 'bg-slate-200'
+                    }`}
+                  />
+                ))}
+              </div>
+
+              {/* Tip del paso actual */}
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4">
+                <p className="text-blue-800 text-sm">{currentStepData.tip}</p>
+              </div>
+
+              {error && (
+                <div className="mb-4 bg-red-50 border border-red-200 rounded-lg p-3 flex items-start gap-2">
+                  <AlertCircle className="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5" />
+                  <p className="text-red-800 text-sm">{error}</p>
+                </div>
+              )}
+
+              {/* Textarea para la descripción actual */}
+              <div className="mb-6">
+                <label className="block text-sm font-medium text-slate-700 mb-2">
+                  Escribe aquí:
+                </label>
+                <textarea
+                  value={descriptions[currentStepData.key]}
+                  onChange={(e) => {
+                    setDescriptions({
+                      ...descriptions,
+                      [currentStepData.key]: e.target.value
+                    })
+                    setError(null)
+                  }}
+                  placeholder={currentStepData.placeholder}
+                  rows={8}
+                  className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg focus:border-purple-500 focus:ring-2 focus:ring-purple-200 focus:outline-none resize-none text-slate-800"
+                  disabled={isSaving}
+                />
+                <p className="text-xs text-slate-500 mt-1">
+                  {descriptions[currentStepData.key].length} caracteres
+                </p>
+              </div>
+
+              {/* Botones de navegación */}
+              <div className="flex gap-3">
+                {currentStep > 0 && (
+                  <button
+                    onClick={handlePrevStep}
+                    disabled={isSaving}
+                    className="flex-1 px-4 py-3 bg-slate-100 text-slate-700 rounded-lg hover:bg-slate-200 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+                  >
+                    <ChevronLeft className="w-5 h-5" />
+                    Anterior
+                  </button>
+                )}
+
+                {currentStep < STEPS.length - 1 ? (
+                  <button
+                    onClick={handleNextStep}
+                    disabled={isSaving}
+                    className="flex-1 px-4 py-3 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+                  >
+                    Siguiente
+                    <ChevronRight className="w-5 h-5" />
+                  </button>
+                ) : (
+                  <button
+                    onClick={handleSaveDescription}
+                    disabled={isSaving || saveSuccess}
+                    className="flex-1 px-4 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+                  >
+                    {isSaving ? (
+                      <>
+                        <Loader2 className="w-5 h-5 animate-spin" />
+                        Guardando...
+                      </>
+                    ) : (
+                      <>
+                        <Save className="w-5 h-5" />
+                        Guardar y continuar
+                      </>
+                    )}
+                  </button>
+                )}
               </div>
             </div>
           </div>
-        )}
+        </div>
       </main>
 
       <Footer />
-
-      {/* Modal de Descripción */}
-      {descriptionModal.isOpen && descriptionModal.photo && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl max-w-6xl w-full max-h-[90vh] overflow-hidden shadow-2xl flex flex-col">
-            <div className="bg-gradient-to-r from-purple-600 to-purple-700 px-6 py-4 flex justify-between items-center">
-              <h2 className="text-xl font-bold text-white">Describe esta imagen</h2>
-              <button onClick={closeDescriptionModal} className="p-2 hover:bg-white/20 rounded-lg">
-                <X className="w-5 h-5 text-white" />
-              </button>
-            </div>
-
-            <div className="flex-1 overflow-y-auto">
-              <div className="grid md:grid-cols-2 gap-6 p-6">
-                <div className="space-y-4">
-                  <div className="relative bg-slate-100 rounded-xl overflow-hidden cursor-pointer group"
-                    onClick={openZoomFromModal}>
-                    <img
-                      src={descriptionModal.photo.urlImagen}
-                      alt="Imagen a describir"
-                      className="w-full h-auto object-contain max-h-[500px] transition-transform group-hover:scale-105"
-                    />
-                    <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-all flex items-center justify-center">
-                      <div className="bg-white/90 p-3 rounded-full opacity-0 group-hover:opacity-100">
-                        <ZoomIn className="w-6 h-6 text-purple-600" />
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="flex flex-col">
-                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
-                    <h3 className="font-semibold text-blue-900 mb-2 flex items-center gap-2">
-                      <AlertCircle className="w-5 h-5" />
-                      Instrucciones
-                    </h3>
-                    <ul className="text-sm text-blue-800 space-y-1 list-disc list-inside">
-                      <li>Describe quiénes aparecen en la imagen</li>
-                      <li>Menciona el lugar donde fue tomada</li>
-                      <li>Relata qué evento o momento representa</li>
-                      <li>Incluye detalles que recuerdes sobre ese día</li>
-                    </ul>
-                  </div>
-
-                  <label className="text-sm font-semibold text-slate-700 mb-2">
-                    Tu descripción:
-                  </label>
-                  <textarea
-                    ref={textareaRef}
-                    value={currentDescription}
-                    onChange={handleDescriptionChange}
-                    placeholder="Escribe aquí tu descripción..."
-                    className="flex-1 min-h-[200px] w-full px-4 py-3 border-2 border-slate-200 rounded-lg focus:border-purple-500 focus:ring-2 focus:ring-purple-200 focus:outline-none resize-none"
-                    disabled={isSaving || saveSuccess}
-                  />
-
-                  <div className="flex justify-between items-center text-xs mt-1">
-                    <div>
-                      {isAutoSaving && (
-                        <span className="text-green-600 font-medium flex items-center gap-1">
-                          <CheckCircle className="w-3 h-3" />
-                          Progreso guardado
-                        </span>
-                      )}
-                    </div>
-                    <span className="text-slate-500">{currentDescription.length} caracteres</span>
-                  </div>
-
-                  {saveSuccess && (
-                    <div className="mt-4 bg-green-50 border border-green-200 rounded-lg p-3 flex items-start gap-2">
-                      <CheckCircle className="w-5 h-5 text-green-600 flex-shrink-0" />
-                      <div>
-                        <p className="text-green-800 font-medium">¡Descripción guardada!</p>
-                        <p className="text-green-700 text-sm">Tu respuesta ha sido evaluada automáticamente</p>
-                      </div>
-                    </div>
-                  )}
-
-                  {saveError && (
-                    <div className="mt-4 bg-red-50 border border-red-200 rounded-lg p-3 flex items-start gap-2">
-                      <AlertTriangle className="w-5 h-5 text-red-600 flex-shrink-0" />
-                      <div>
-                        <p className="text-red-800 font-medium">Error</p>
-                        <p className="text-red-700 text-sm">{saveError}</p>
-                      </div>
-                    </div>
-                  )}
-
-                  <div className="flex gap-3 mt-4">
-                    <button
-                      onClick={cancelDescription}
-                      disabled={isSaving || saveSuccess}
-                      className="flex-1 px-4 py-3 bg-slate-100 text-slate-700 rounded-lg hover:bg-slate-200 disabled:opacity-50"
-                    >
-                      Cancelar
-                    </button>
-                    <button
-                      onClick={saveDescription}
-                      disabled={isSaving || saveSuccess || currentDescription.trim().length === 0}
-                      className="flex-1 px-4 py-3 bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:opacity-50 flex items-center justify-center gap-2"
-                    >
-                      {isSaving ? (
-                        <>
-                          <Loader2 className="w-5 h-5 animate-spin" />
-                          Evaluando...
-                        </>
-                      ) : saveSuccess ? (
-                        <>
-                          <CheckCircle className="w-5 h-5" />
-                          Guardado
-                        </>
-                      ) : (
-                        <>
-                          <Save className="w-5 h-5" />
-                          Guardar y Evaluar
-                        </>
-                      )}
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Vista Zoom */}
-      {selectedPhoto && (
-        <div className="fixed inset-0 bg-black z-[60] flex flex-col">
-          <div className="absolute top-4 left-1/2 -translate-x-1/2 flex items-center gap-3 z-10">
-            <button onClick={handleZoomOut} disabled={zoom <= 0.5}
-              className={`px-3 py-2 rounded-lg shadow-lg ${zoom <= 0.5 ? "bg-slate-700 text-slate-500" : "bg-white/90 text-purple-600"}`}>
-              <Minus className="w-5 h-5" />
-            </button>
-            <div className="bg-white/90 px-4 py-2 rounded-lg shadow-lg">
-              <span className="font-bold text-lg">{Math.round(zoom * 100)}%</span>
-            </div>
-            <button onClick={handleZoomIn} disabled={zoom >= 3}
-              className={`px-3 py-2 rounded-lg shadow-lg ${zoom >= 3 ? "bg-slate-700 text-slate-500" : "bg-white/90 text-purple-600"}`}>
-              <Plus className="w-5 h-5" />
-            </button>
-          </div>
-
-          <button onClick={closeZoom} className="absolute top-4 right-4 bg-white/90 p-2 rounded-lg shadow-lg z-10">
-            <X className="w-5 h-5" />
-          </button>
-
-          <div className="w-full h-full flex items-center justify-center overflow-auto" onWheel={onImageWheel}>
-            <img src={selectedPhoto.urlImagen} alt="Zoom"
-              className="object-contain"
-              style={{ transform: `scale(${zoom})`, maxWidth: "100%", maxHeight: "100vh" }}
-            />
-          </div>
-        </div>
-      )}
     </div>
   )
 }

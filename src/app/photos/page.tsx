@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation"
 import Header from "@/app/components/header"
 import Footer from "@/app/components/footer"
 import DeletePhotoModal from "@/app/components/photos/DeletePhotoModal"
-import { Plus, Edit, Trash2, Image as ImageIcon, CheckCircle, X, Loader2 } from "lucide-react"
+import { Plus, Edit, Trash2, Image as ImageIcon, CheckCircle, X, Loader2, Calendar } from "lucide-react"
 import { createClient } from "@/utils/supabase/client"
 
 const API_URL = 'http://localhost:3000'
@@ -160,6 +160,18 @@ export default function PhotosListPage() {
               <p className="text-slate-600">
                 Gestiona las fotografías del paciente para las evaluaciones cognitivas.
               </p>
+            </div>
+            <div className="flex gap-3">
+              <button
+                onClick={() => router.push("/sessiones/create")}
+                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors flex items-center gap-2">
+                <Calendar className="w-5 h-5" />
+                Nueva Sesión
+              
+              
+              </button>
+
+
             </div>
             <button
               onClick={() => router.push("/photos/upload")}
