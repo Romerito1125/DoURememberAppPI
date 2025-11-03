@@ -2,10 +2,11 @@
 
 import { useState } from "react"
 import { useRouter } from "next/navigation"
-import { Mail, Lock } from "lucide-react"
+import { Mail, Lock, AlertCircle } from "lucide-react"
 import Input from "@/app/components/input"
 import GoogleSignInButton from "@/app/components/auth/GoogleSignInButton"
 import GoogleOneTap from "@/app/components/auth/GoogleOneTap"
+import { authService } from "@/services/auth.service"
 
 // ============================================
 // TIPOS
@@ -18,6 +19,7 @@ interface FormData {
 interface FormErrors {
   email?: string
   password?: string
+  general?: string
 }
 
 // ============================================
@@ -32,6 +34,7 @@ function LoginForm() {
   const goToSignUp = () => {
     router.push("/authentication/signup")
   }
+  
   const goToResetPassword = () => {
     router.push("/authentication/reset-password")
   }
@@ -47,8 +50,8 @@ function LoginForm() {
 
     if (!formData.password) {
       newErrors.password = "La contraseña es requerida"
-    } else if (formData.password.length < 8) {
-      newErrors.password = "Mínimo 8 caracteres"
+    } else if (formData.password.length < 10) {
+      newErrors.password = "La contraseña debe tener mínimo 10 caracteres"
     }
 
     return newErrors
@@ -56,6 +59,11 @@ function LoginForm() {
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
+    
+    // Limpiar errores previos
+    setErrors({})
+    
+    // Validar formulario
     const newErrors = validate()
     if (Object.keys(newErrors).length > 0) {
       setErrors(newErrors)
@@ -63,10 +71,43 @@ function LoginForm() {
     }
 
     setIsLoading(true)
-    setTimeout(() => {
-      console.log("Login:", formData)
+    
+    try {
+      console.log('🔐 Intentando login...')
+      
+      // Intentar login con el backend
+      const session = await authService.login(formData.email, formData.password)
+      
+      console.log('✅ Login exitoso:', session)
+      
+      // Redirigir según el rol del usuario
+      switch (session.rol) {
+        case 'medico':
+          console.log('👨‍⚕️ Redirigiendo a panel de médico')
+          router.push('/users/doctor')
+          break
+        case 'paciente':
+          console.log('🧑 Redirigiendo a panel de paciente')
+          router.push('/users/patient')
+          break
+        case 'cuidador':
+          console.log('👥 Redirigiendo a panel de cuidador')
+          router.push('/photos') // Cuidador gestiona fotos
+          break
+        default:
+          console.log('🏠 Redirigiendo a inicio')
+          router.push('/')
+      }
+      
+    } catch (error: any) {
+      console.error('❌ Error en login:', error)
+      
+      setErrors({ 
+        general: error.message || 'Error al iniciar sesión. Verifica tus credenciales.' 
+      })
+      
       setIsLoading(false)
-    }, 1500)
+    }
   }
 
   return (
@@ -91,6 +132,14 @@ function LoginForm() {
               Ingresa a tu cuenta
             </p>
 
+            {/* Error general */}
+            {errors.general && (
+              <div className="mb-6 bg-red-50 border border-red-200 rounded-lg p-4 flex items-start gap-3">
+                <AlertCircle className="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5" />
+                <p className="text-red-800 text-sm">{errors.general}</p>
+              </div>
+            )}
+
             {/* Botón de Google Sign-In */}
             <div className="mb-6">
               <GoogleSignInButton />
@@ -109,9 +158,13 @@ function LoginForm() {
                 type="email"
                 icon={Mail}
                 value={formData.email}
-                onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+                onChange={(e) => {
+                  setFormData({ ...formData, email: e.target.value })
+                  if (errors.email) setErrors({ ...errors, email: undefined })
+                }}
                 error={errors.email}
                 placeholder="tu@correo.com"
+                disabled={isLoading}
               />
 
               <Input
@@ -119,9 +172,13 @@ function LoginForm() {
                 type="password"
                 icon={Lock}
                 value={formData.password}
-                onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+                onChange={(e) => {
+                  setFormData({ ...formData, password: e.target.value })
+                  if (errors.password) setErrors({ ...errors, password: undefined })
+                }}
                 error={errors.password}
                 placeholder="••••••••"
+                disabled={isLoading}
               />
 
               <div className="flex items-center justify-between text-sm">
@@ -129,13 +186,15 @@ function LoginForm() {
                   <input 
                     type="checkbox" 
                     className="w-4 h-4 text-purple-600 rounded focus:ring-purple-500"
+                    disabled={isLoading}
                   />
                   <span className="text-slate-600">Recordarme</span>
                 </label>
                 <button 
                   onClick={goToResetPassword} 
-                  className="text-purple-600 hover:text-purple-700 font-medium bg-transparent border-none cursor-pointer"
+                  className="text-purple-600 hover:text-purple-700 font-medium bg-transparent border-none cursor-pointer disabled:opacity-50"
                   type="button"
+                  disabled={isLoading}
                 >
                   ¿Olvidaste tu contraseña?
                 </button>
@@ -144,17 +203,25 @@ function LoginForm() {
               <button 
                 type="submit" 
                 disabled={isLoading} 
-                className="w-full bg-purple-600 hover:bg-purple-700 text-white font-semibold py-3 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                className="w-full bg-purple-600 hover:bg-purple-700 text-white font-semibold py-3 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
               >
-                {isLoading ? "Iniciando sesión..." : "Iniciar sesión"}
+                {isLoading ? (
+                  <>
+                    <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+                    Iniciando sesión...
+                  </>
+                ) : (
+                  "Iniciar sesión"
+                )}
               </button>
 
               <p className="text-center text-slate-600 text-sm mt-6">
                 ¿No tienes cuenta?{" "}
                 <button 
                   onClick={goToSignUp} 
-                  className="text-purple-600 hover:text-purple-700 font-medium bg-transparent border-none cursor-pointer"
+                  className="text-purple-600 hover:text-purple-700 font-medium bg-transparent border-none cursor-pointer disabled:opacity-50"
                   type="button"
+                  disabled={isLoading}
                 >
                   Regístrate aquí
                 </button>
