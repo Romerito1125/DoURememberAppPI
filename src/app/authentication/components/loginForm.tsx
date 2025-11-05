@@ -92,7 +92,11 @@ function LoginForm() {
           break
         case 'cuidador':
           console.log('👥 Redirigiendo a panel de cuidador')
-          router.push('/photos') // Cuidador gestiona fotos
+          router.push('/users/cuidador')
+          break
+        case 'administrador':
+          console.log('👑 Redirigiendo a panel de administrador')
+          router.push('/users/admin')
           break
         default:
           console.log('🏠 Redirigiendo a inicio')

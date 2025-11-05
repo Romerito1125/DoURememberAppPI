@@ -3,8 +3,10 @@
  * Gestiona todas las peticiones HTTP al backend
  */
 
+import { authService } from './auth.service'
+
 // =============================================
-// CONFIGURACIÓN - UNA SOLA URL
+// CONFIGURACIÓN
 // =============================================
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000'
 
@@ -17,7 +19,7 @@ export interface CreateUserDto {
   nombre: string
   correo: string
   contrasenia: string
-  rol?: 'medico' | 'paciente' | 'cuidador'
+  rol?: 'medico' | 'paciente' | 'cuidador' | 'administrador'
   edad?: number
   status?: string
 }
@@ -58,6 +60,25 @@ class ApiService {
 
   constructor() {
     this.baseUrl = API_URL
+    console.log('🔗 API Service inicializado con URL:', this.baseUrl)
+  }
+
+  /**
+   * Obtener headers con autenticación automática
+   */
+  private getAuthHeaders(): HeadersInit {
+    const token = authService.getAccessToken()
+    
+    const headers: HeadersInit = {
+      'Content-Type': 'application/json',
+      'Accept': 'application/json',
+    }
+
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`
+    }
+
+    return headers
   }
 
   // =========================================
@@ -69,10 +90,13 @@ class ApiService {
    */
   async signUp(data: CreateUserDto): Promise<SignUpResponse> {
     try {
-      const response = await fetch(`${this.baseUrl}/usuarios-autenticacion/crearUsuario`, {
+      console.log('📤 Enviando registro a:', `${this.baseUrl}/api/usuarios-autenticacion/crearUsuario`)
+      
+      const response = await fetch(`${this.baseUrl}/api/usuarios-autenticacion/crearUsuario`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'Accept': 'application/json',
         },
         body: JSON.stringify(data),
       })
@@ -84,7 +108,7 @@ class ApiService {
 
       return await response.json()
     } catch (error: any) {
-      console.error('Error en signUp:', error)
+      console.error('❌ Error en signUp:', error)
       throw new Error(error.message || 'Error al registrar usuario')
     }
   }
@@ -94,10 +118,13 @@ class ApiService {
    */
   async login(data: LoginDto): Promise<LoginResponse> {
     try {
-      const response = await fetch(`${this.baseUrl}/usuarios-autenticacion/login`, {
+      console.log('📤 Enviando login a:', `${this.baseUrl}/api/usuarios-autenticacion/login`)
+      
+      const response = await fetch(`${this.baseUrl}/api/usuarios-autenticacion/login`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'Accept': 'application/json',
         },
         body: JSON.stringify(data),
       })
@@ -109,23 +136,21 @@ class ApiService {
 
       return await response.json()
     } catch (error: any) {
-      console.error('Error en login:', error)
+      console.error('❌ Error en login:', error)
       throw new Error(error.message || 'Credenciales inválidas')
     }
   }
 
   /**
-   * Obtener usuario por ID
+   * Obtener usuario por ID (usa token automáticamente)
    */
   async getUserById(userId: string): Promise<any> {
     try {
       const response = await fetch(
-        `${this.baseUrl}/usuarios-autenticacion/buscarUsuario/${userId}`,
+        `${this.baseUrl}/api/usuarios-autenticacion/buscarUsuario/${userId}`,
         {
           method: 'GET',
-          headers: {
-            'Content-Type': 'application/json',
-          },
+          headers: this.getAuthHeaders(), // ← Usa token automáticamente
         }
       )
 
@@ -141,15 +166,13 @@ class ApiService {
   }
 
   /**
-   * Listar todos los usuarios
+   * Listar todos los usuarios (usa token automáticamente)
    */
   async getAllUsers(): Promise<any> {
     try {
-      const response = await fetch(`${this.baseUrl}/usuarios-autenticacion/buscarUsuarios`, {
+      const response = await fetch(`${this.baseUrl}/api/usuarios-autenticacion/buscarUsuarios`, {
         method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: this.getAuthHeaders(), // ← Usa token automáticamente
       })
 
       if (!response.ok) {
@@ -164,15 +187,13 @@ class ApiService {
   }
 
   /**
-   * Asignar médico a paciente
+   * Asignar médico a paciente (usa token automáticamente)
    */
   async assignDoctor(data: AssignDoctorDto): Promise<any> {
     try {
-      const response = await fetch(`${this.baseUrl}/usuarios-autenticacion/asignarMedico`, {
+      const response = await fetch(`${this.baseUrl}/api/usuarios-autenticacion/asignarMedico`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: this.getAuthHeaders(), // ← Usa token automáticamente
         body: JSON.stringify(data),
       })
 
@@ -193,17 +214,25 @@ class ApiService {
   // =========================================
 
   /**
-   * Subir imagen
+   * Subir imagen (usa token automáticamente)
    */
   async uploadImage(file: File, userId: string) {
     try {
+      const token = authService.getAccessToken()
+      
       const formData = new FormData()
       formData.append('file', file)
 
+      const headers: HeadersInit = {}
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`
+      }
+
       const response = await fetch(
-        `${this.baseUrl}/descripciones-imagenes/uploadImage/${userId}`,
+        `${this.baseUrl}/api/descripciones-imagenes/uploadImage/${userId}`,
         {
           method: 'POST',
+          headers, // ← Solo Authorization, NO Content-Type (FormData lo maneja automáticamente)
           body: formData,
         }
       )
@@ -217,7 +246,7 @@ class ApiService {
   }
 
   /**
-   * Crear Ground Truth (contexto de la imagen)
+   * Crear Ground Truth (usa token automáticamente)
    */
   async crearGroundTruth(data: {
     texto: string
@@ -227,10 +256,10 @@ class ApiService {
   }) {
     try {
       const response = await fetch(
-        `${this.baseUrl}/descripciones-imagenes/crearGroundTruth`,
+        `${this.baseUrl}/api/descripciones-imagenes/crearGroundTruth`,
         {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: this.getAuthHeaders(), // ← Usa token automáticamente
           body: JSON.stringify(data),
         }
       )
@@ -244,15 +273,15 @@ class ApiService {
   }
 
   /**
-   * Crear sesión de evaluación
+   * Crear sesión de evaluación (usa token automáticamente)
    */
   async crearSesion(idPaciente: string) {
     try {
       const response = await fetch(
-        `${this.baseUrl}/descripciones-imagenes/crearSesion`,
+        `${this.baseUrl}/api/descripciones-imagenes/crearSesion`,
         {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: this.getAuthHeaders(), // ← Usa token automáticamente
           body: JSON.stringify({ idPaciente }),
         }
       )
@@ -266,7 +295,7 @@ class ApiService {
   }
 
   /**
-   * Crear descripción de imagen
+   * Crear descripción de imagen (usa token automáticamente)
    */
   async crearDescripcion(data: {
     texto: string
@@ -276,10 +305,10 @@ class ApiService {
   }) {
     try {
       const response = await fetch(
-        `${this.baseUrl}/descripciones-imagenes/crearDescripcion`,
+        `${this.baseUrl}/api/descripciones-imagenes/crearDescripcion`,
         {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: this.getAuthHeaders(), // ← Usa token automáticamente
           body: JSON.stringify(data),
         }
       )
@@ -293,12 +322,15 @@ class ApiService {
   }
 
   /**
-   * Listar imágenes de un cuidador
+   * Listar imágenes de un cuidador (usa token automáticamente)
    */
   async listarImagenes(cuidadorId: string, page = 1, limit = 10) {
     try {
       const response = await fetch(
-        `${this.baseUrl}/descripciones-imagenes/listarImagenes/${cuidadorId}?page=${page}&limit=${limit}`
+        `${this.baseUrl}/api/descripciones-imagenes/listarImagenes/${cuidadorId}?page=${page}&limit=${limit}`,
+        {
+          headers: this.getAuthHeaders(), // ← Usa token automáticamente
+        }
       )
 
       if (!response.ok) throw new Error('Error al listar imágenes')
@@ -310,12 +342,15 @@ class ApiService {
   }
 
   /**
-   * Obtener baseline de un paciente
+   * Obtener baseline de un paciente (usa token automáticamente)
    */
   async getBaseline(idPaciente: string) {
     try {
       const response = await fetch(
-        `${this.baseUrl}/descripciones-imagenes/baseline/${idPaciente}`
+        `${this.baseUrl}/api/descripciones-imagenes/baseline/${idPaciente}`,
+        {
+          headers: this.getAuthHeaders(), // ← Usa token automáticamente
+        }
       )
 
       if (!response.ok) throw new Error('Error al obtener baseline')
@@ -327,12 +362,15 @@ class ApiService {
   }
 
   /**
-   * Listar sesiones de un paciente
+   * Listar sesiones de un paciente (usa token automáticamente)
    */
   async listarSesiones(idPaciente: string, page = 1, limit = 10) {
     try {
       const response = await fetch(
-        `${this.baseUrl}/descripciones-imagenes/listarSesiones?idPaciente=${idPaciente}&page=${page}&limit=${limit}`
+        `${this.baseUrl}/api/descripciones-imagenes/listarSesiones?idPaciente=${idPaciente}&page=${page}&limit=${limit}`,
+        {
+          headers: this.getAuthHeaders(), // ← Usa token automáticamente
+        }
       )
 
       if (!response.ok) throw new Error('Error al listar sesiones')
@@ -344,14 +382,15 @@ class ApiService {
   }
 
   /**
-   * Eliminar imagen
+   * Eliminar imagen (usa token automáticamente)
    */
   async eliminarImagen(idImagen: number) {
     try {
       const response = await fetch(
-        `${this.baseUrl}/descripciones-imagenes/eliminar/${idImagen}`,
+        `${this.baseUrl}/api/descripciones-imagenes/eliminar/${idImagen}`,
         {
           method: 'DELETE',
+          headers: this.getAuthHeaders(), // ← Usa token automáticamente
         }
       )
 
@@ -364,15 +403,15 @@ class ApiService {
   }
 
   /**
-   * Actualizar sesión
+   * Actualizar sesión (usa token automáticamente)
    */
   async actualizarSesion(idSesion: number, data: { estado: string }) {
     try {
       const response = await fetch(
-        `${this.baseUrl}/descripciones-imagenes/actualizarSesion/${idSesion}`,
+        `${this.baseUrl}/api/descripciones-imagenes/actualizarSesion/${idSesion}`,
         {
           method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
+          headers: this.getAuthHeaders(), // ← Usa token automáticamente
           body: JSON.stringify(data),
         }
       )
